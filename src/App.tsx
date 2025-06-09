@@ -1,56 +1,72 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import JSZip from 'jszip';
 import { FileUpload } from './components/FileUpload';
 import { FileListItem } from './components/FileListItem';
 import { SettingsControls } from './components/SettingsControls';
-import { transcribeText, fetchAvailableVoices, TranscriptionResult } from './services/transcriptionService';
-import type { ProcessedFile, FileStatus } from './types';
+import type { ProcessedFile } from './types';
 import { ArrowUpTrayIcon } from './components/icons/ArrowUpTrayIcon';
 import { DocumentTextIcon } from './components/icons/DocumentTextIcon';
 import { DownloadIcon } from './components/icons/DownloadIcon';
+import { useAppDispatch, useAppSelector } from './store/hooks';
+import {
+  setIsReadingFiles,
+  setIsDownloading,
+  addProcessedFiles,
+  transcribeMultipleFiles,
+  clearAllFiles,
+  clearError,
+} from './store/slices/filesSlice';
+import {
+  loadVoices,
+  setSelectedVoice,
+  setSelectedSpeed,
+} from './store/slices/settingsSlice';
+import {
+  setGlobalMessage,
+  clearGlobalMessage,
+} from './store/slices/uiSlice';
+import {
+  selectProcessedFiles,
+  selectIsReadingFiles,
+  selectIsTranscribing,
+  selectIsDownloading,
+  selectSelectedVoice,
+  selectAvailableVoices,
+  selectSelectedSpeed,
+  selectIsLoadingVoices,
+  selectGlobalMessage,
+  selectCanTranscribe,
+  selectCanClear,
+  selectCanDownload,
+  selectReadyFiles,
+  selectTranscribedFiles,
+  selectTranscriptionProgress,
+} from './store/selectors';
 
 const App: React.FC = () => {
-  const [processedFiles, setProcessedFiles] = useState<ProcessedFile[]>([]);
-  const [isReadingFiles, setIsReadingFiles] = useState<boolean>(false);
-  const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
-  const [isDownloading, setIsDownloading] = useState<boolean>(false);
-  const [globalMessage, setGlobalMessage] = useState<string | null>(null);
-
-  const [selectedVoice, setSelectedVoice] = useState<string>('am_michael');
-  const [availableVoices, setAvailableVoices] = useState<string[]>(['am_michael']);
-  const [isLoadingVoices, setIsLoadingVoices] = useState<boolean>(true);
-  const [selectedSpeed, setSelectedSpeed] = useState<number>(1.0);
+  const dispatch = useAppDispatch();
+  
+  // RTK Best Practice: Use memoized selectors
+  const processedFiles = useAppSelector(selectProcessedFiles);
+  const isReadingFiles = useAppSelector(selectIsReadingFiles);
+  const isTranscribing = useAppSelector(selectIsTranscribing);
+  const isDownloading = useAppSelector(selectIsDownloading);
+  const selectedVoice = useAppSelector(selectSelectedVoice);
+  const availableVoices = useAppSelector(selectAvailableVoices);
+  const selectedSpeed = useAppSelector(selectSelectedSpeed);
+  const isLoadingVoices = useAppSelector(selectIsLoadingVoices);
+  const globalMessage = useAppSelector(selectGlobalMessage);
+  const transcriptionProgress = useAppSelector(selectTranscriptionProgress);
+  
+  // RTK Best Practice: Use computed selectors for derived state
+  const canTranscribe = useAppSelector(selectCanTranscribe);
+  const canClear = useAppSelector(selectCanClear);
+  const canDownload = useAppSelector(selectCanDownload);
+  const readyFiles = useAppSelector(selectReadyFiles);
 
   useEffect(() => {
-    const loadVoices = async () => {
-      setIsLoadingVoices(true);
-      try {
-        const voices = await fetchAvailableVoices();
-        // Ensure 'am_michael' is in the list and set as default if available
-        // Also handle if fetchAvailableVoices returns an empty array or specific defaults
-        const uniqueVoices = Array.from(new Set(['am_michael', ...voices]));
-        setAvailableVoices(uniqueVoices);
-        if (uniqueVoices.includes('am_michael')) {
-          setSelectedVoice('am_michael');
-        } else if (uniqueVoices.length > 0) {
-          setSelectedVoice(uniqueVoices[0]); // Fallback to first available if am_michael isn't there
-        }
-        // If voices array is empty after fetch (e.g. API returns empty or error fallback is empty)
-        // it will remain with initial ['am_michael'] or whatever fetchAvailableVoices error fallback provides.
-      } catch (error) {
-        console.error("Failed to load voices, using default:", error);
-        // Keep 'am_michael' as default if loading fails
-        if (!availableVoices.includes('am_michael')) {
-            setAvailableVoices(prev => Array.from(new Set(['am_michael', ...prev])));
-        }
-         setSelectedVoice('am_michael');
-      } finally {
-        setIsLoadingVoices(false);
-      }
-    };
-    loadVoices();
-  }, []);
-
+    dispatch(loadVoices());
+  }, [dispatch]);
 
   const readFileContent = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -67,152 +83,130 @@ const App: React.FC = () => {
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
-    setIsReadingFiles(true);
-    setGlobalMessage(`Reading ${files.length} item(s)...`);
+    
+    dispatch(setIsReadingFiles(true));
+    dispatch(setGlobalMessage(`Reading ${files.length} item(s)...`));
+    dispatch(clearError()); // Clear any previous errors
 
     const newFilesToProcess: ProcessedFile[] = [];
 
-    for (const file of files) {
-      setGlobalMessage(`Processing ${file.name}...`);
-      if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-        try {
-          const content = await readFileContent(file);
-          newFilesToProcess.push({
-            id: crypto.randomUUID(),
-            name: file.name,
-            content,
-            status: 'ready',
-          });
-        } catch (error) {
-          console.error(`Error reading file ${file.name}:`, error);
-          newFilesToProcess.push({
-            id: crypto.randomUUID(),
-            name: file.name,
-            content: '',
-            status: 'error',
-            error: `Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
-          });
-        }
-      } else if (file.type === 'application/zip' || file.name.endsWith('.zip')) {
-        try {
-          const jszip = new JSZip();
-          const zip = await jszip.loadAsync(file);
-          const textFilePromises: Promise<ProcessedFile>[] = [];
-          
-          zip.forEach((_, zipEntry) => {
-            if (!zipEntry.dir && (zipEntry.name.endsWith('.txt') || zipEntry.name.endsWith('.TXT'))) {
-              setGlobalMessage(`Extracting ${zipEntry.name} from ${file.name}...`);
-              const promise = zipEntry.async('string').then(content => ({
-                id: crypto.randomUUID(),
-                name: zipEntry.name,
-                content,
-                status: 'ready' as FileStatus,
-              })).catch(err => {
-                console.error(`Error reading ${zipEntry.name} from zip:`, err);
-                return {
+    try {
+      for (const file of files) {
+        dispatch(setGlobalMessage(`Processing ${file.name}...`));
+        
+        if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+          try {
+            const content = await readFileContent(file);
+            newFilesToProcess.push({
+              id: crypto.randomUUID(),
+              name: file.name,
+              content,
+              status: 'ready',
+            });
+          } catch (error) {
+            console.error(`Error reading file ${file.name}:`, error);
+            newFilesToProcess.push({
+              id: crypto.randomUUID(),
+              name: file.name,
+              content: '',
+              status: 'error',
+              error: `Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
+            });
+          }
+        } else if (file.type === 'application/zip' || file.name.endsWith('.zip')) {
+          try {
+            const jszip = new JSZip();
+            const zip = await jszip.loadAsync(file);
+            const textFilePromises: Promise<ProcessedFile>[] = [];
+            
+            zip.forEach((_, zipEntry) => {
+              if (!zipEntry.dir && (zipEntry.name.endsWith('.txt') || zipEntry.name.endsWith('.TXT'))) {
+                dispatch(setGlobalMessage(`Extracting ${zipEntry.name} from ${file.name}...`));
+                const promise = zipEntry.async('string').then(content => ({
                   id: crypto.randomUUID(),
                   name: zipEntry.name,
-                  content: '',
-                  status: 'error' as FileStatus,
-                  error: `Failed to read from ZIP: ${err instanceof Error ? err.message : String(err)}`
-                };
-              });
-              textFilePromises.push(promise);
-            }
-          });
-          
-          const filesFromZip = await Promise.all(textFilePromises);
-          newFilesToProcess.push(...filesFromZip);
-        } catch (error) {
-          console.error(`Error processing zip file ${file.name}:`, error);
+                  content,
+                  status: 'ready' as const,
+                })).catch(err => {
+                  console.error(`Error reading ${zipEntry.name} from zip:`, err);
+                  return {
+                    id: crypto.randomUUID(),
+                    name: zipEntry.name,
+                    content: '',
+                    status: 'error' as const,
+                    error: `Failed to read from ZIP: ${err instanceof Error ? err.message : String(err)}`
+                  };
+                });
+                textFilePromises.push(promise);
+              }
+            });
+            
+            const filesFromZip = await Promise.all(textFilePromises);
+            newFilesToProcess.push(...filesFromZip);
+          } catch (error) {
+            console.error(`Error processing zip file ${file.name}:`, error);
+            newFilesToProcess.push({
+              id: crypto.randomUUID(),
+              name: file.name,
+              content: '',
+              status: 'error',
+              error: `Failed to process ZIP: ${error instanceof Error ? error.message : String(error)}`,
+            });
+          }
+        } else {
           newFilesToProcess.push({
-            id: crypto.randomUUID(),
-            name: file.name,
-            content: '',
-            status: 'error',
-            error: `Failed to process ZIP: ${error instanceof Error ? error.message : String(error)}`,
-          });
-        }
-      } else {
-         newFilesToProcess.push({
             id: crypto.randomUUID(),
             name: file.name,
             content: '',
             status: 'error',
             error: 'Unsupported file type. Please upload .txt or .zip files.',
           });
+        }
       }
+      
+      dispatch(addProcessedFiles(newFilesToProcess));
+    } catch (error) {
+      console.error('Error during file processing:', error);
+      dispatch(setGlobalMessage('An error occurred while processing files.'));
+    } finally {
+      dispatch(setIsReadingFiles(false));
+      dispatch(clearGlobalMessage());
     }
-    setProcessedFiles(prev => [...prev, ...newFilesToProcess]);
-    setIsReadingFiles(false);
-    setGlobalMessage(null);
-  }, []);
+  }, [dispatch]);
 
   const handleStartTranscription = useCallback(async () => {
-    const filesToTranscribe = processedFiles.filter(f => f.status === 'ready');
-    if (filesToTranscribe.length === 0) return;
+    if (readyFiles.length === 0) return;
 
-    setIsTranscribing(true);
-    setGlobalMessage(`Starting transcription of ${filesToTranscribe.length} file(s)...`);
+    dispatch(setGlobalMessage(`Starting transcription of ${readyFiles.length} file(s)...`));
 
-    // Process files one at a time
-    for (const file of filesToTranscribe) {
-      // Update status to processing for current file
-      setProcessedFiles(prevFiles =>
-        prevFiles.map(f =>
-          f.id === file.id ? { ...f, status: 'processing' } : f
-        )
-      );
-
-      setGlobalMessage(`Transcribing ${file.name} with voice: ${selectedVoice}, speed: ${selectedSpeed}x...`);
-
-      try {
-        const result: TranscriptionResult = await transcribeText(file.content, file.name, selectedVoice, selectedSpeed);
-        
-        // Update the processed file with success status
-        setProcessedFiles(prevFiles =>
-          prevFiles.map(f =>
-            f.id === file.id ? { ...f, status: 'transcribed', audioSrc: result.audioSrc } : f
-          )
-        );
-        
-        setGlobalMessage(`Successfully transcribed ${file.name}`);
-        // Short pause to show success message
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-      } catch (error) {
-        console.error(`Error transcribing file ${file.name}:`, error);
-        
-        // Update the processed file with error status
-        setProcessedFiles(prevFiles =>
-          prevFiles.map(f =>
-            f.id === file.id ? { ...f, status: 'error', error: `Transcription failed: ${error instanceof Error ? error.message : String(error)}` } : f
-          )
-        );
-        
-        setGlobalMessage(`Failed to transcribe ${file.name}`);
-        // Short pause to show error message
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+    try {
+      await dispatch(transcribeMultipleFiles({ 
+        files: readyFiles, 
+        voice: selectedVoice, 
+        speed: selectedSpeed 
+      })).unwrap();
+      
+      dispatch(setGlobalMessage("All transcriptions completed successfully!"));
+      setTimeout(() => dispatch(clearGlobalMessage()), 5000);
+    } catch (error) {
+      console.error('Error during bulk transcription:', error);
+      dispatch(setGlobalMessage("Some transcriptions failed. Please check individual file statuses."));
+      setTimeout(() => dispatch(clearGlobalMessage()), 5000);
     }
-
-    setIsTranscribing(false);
-    setGlobalMessage("All transcriptions completed.");
-    setTimeout(() => setGlobalMessage(null), 5000);
-  }, [processedFiles, selectedVoice, selectedSpeed]);
+  }, [dispatch, selectedVoice, selectedSpeed, readyFiles]);
 
   const handleDownloadAll = useCallback(async () => {
-    const transcribedFiles = processedFiles.filter(f => f.status === 'transcribed' && f.audioSrc);
+    const transcribedFiles = useAppSelector(selectTranscribedFiles);
     if (transcribedFiles.length === 0) return;
 
-    setIsDownloading(true);
-    setGlobalMessage('Preparing ZIP file for download...');
+    dispatch(setIsDownloading(true));
+    dispatch(setGlobalMessage('Preparing ZIP file for download...'));
 
     try {
       const zip = new JSZip();
       
       // Download all audio files and add them to the zip
-      const downloadPromises = transcribedFiles.map(async (file) => {
+      const downloadPromises = transcribedFiles.map(async (file: ProcessedFile) => {
         if (!file.audioSrc) return;
         
         try {
@@ -243,25 +237,55 @@ const App: React.FC = () => {
       document.body.removeChild(link);
       URL.revokeObjectURL(downloadUrl);
       
-      setGlobalMessage('Download complete!');
-      setTimeout(() => setGlobalMessage(null), 3000);
+      dispatch(setGlobalMessage('Download complete!'));
+      setTimeout(() => dispatch(clearGlobalMessage()), 3000);
     } catch (error) {
       console.error('Error creating zip file:', error);
-      setGlobalMessage('Failed to create ZIP file. Please try again.');
-      setTimeout(() => setGlobalMessage(null), 5000);
+      dispatch(setGlobalMessage('Failed to create ZIP file. Please try again.'));
+      setTimeout(() => dispatch(clearGlobalMessage()), 5000);
     } finally {
-      setIsDownloading(false);
+      dispatch(setIsDownloading(false));
     }
-  }, [processedFiles]);
+  }, [dispatch]);
 
-  const handleClearAll = () => {
-    setProcessedFiles([]);
-    setGlobalMessage(null);
-  };
+  const handleClearAll = useCallback(() => {
+    dispatch(clearAllFiles());
+    dispatch(clearGlobalMessage());
+  }, [dispatch]);
 
-  const canTranscribe = processedFiles.some(f => f.status === 'ready') && !isTranscribing && !isReadingFiles;
-  const canClear = processedFiles.length > 0 && !isTranscribing && !isReadingFiles;
-  const canDownload = processedFiles.some(f => f.status === 'transcribed' && f.audioSrc) && !isDownloading && !isTranscribing && !isReadingFiles;
+  const handleVoiceChange = useCallback((voice: string) => {
+    dispatch(setSelectedVoice(voice));
+  }, [dispatch]);
+
+  const handleSpeedChange = useCallback((speed: number) => {
+    dispatch(setSelectedSpeed(speed));
+  }, [dispatch]);
+
+  const handleDownloadSingle = useCallback(async (file: ProcessedFile) => {
+    if (!file.audioSrc) return;
+
+    try {
+      const response = await fetch(file.audioSrc);
+      if (!response.ok) throw new Error(`Failed to download ${file.name}`);
+      
+      const audioBlob = await response.blob();
+      const audioFileName = file.name.replace(/\.[^/.]+$/, '') + '.mp3';
+      
+      // Create download link and trigger download
+      const downloadUrl = URL.createObjectURL(audioBlob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = audioFileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error(`Error downloading ${file.name}:`, error);
+      dispatch(setGlobalMessage(`Failed to download ${file.name}. Please try again.`));
+      setTimeout(() => dispatch(clearGlobalMessage()), 3000);
+    }
+  }, [dispatch]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-100 p-4 sm:p-8 flex flex-col items-center">
@@ -281,17 +305,33 @@ const App: React.FC = () => {
         <SettingsControls
             availableVoices={availableVoices}
             selectedVoice={selectedVoice}
-            onVoiceChange={setSelectedVoice}
+            onVoiceChange={handleVoiceChange}
             selectedSpeed={selectedSpeed}
-            onSpeedChange={setSelectedSpeed}
+            onSpeedChange={handleSpeedChange}
             isLoadingVoices={isLoadingVoices}
             isDisabled={isReadingFiles || isTranscribing}
         />
 
+        {/* Progress indicator for transcription */}
+        {isTranscribing && transcriptionProgress.total > 0 && (
+          <div className="mt-6 text-center text-sky-400">
+            <p>
+              Transcribing {transcriptionProgress.currentFileName || 'files'} 
+              ({transcriptionProgress.current} of {transcriptionProgress.total})
+            </p>
+            <div className="mt-2 h-2 w-full bg-sky-500/30 rounded-full overflow-hidden">
+              <div 
+                className="h-2 bg-sky-500 transition-all duration-300"
+                style={{ width: `${(transcriptionProgress.current / transcriptionProgress.total) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         {(isReadingFiles || isTranscribing || isDownloading || globalMessage) && (
           <div className="mt-6 text-center text-sky-400">
             <p>{globalMessage || (isReadingFiles ? "Processing uploaded files..." : isTranscribing ? "Transcribing files..." : isDownloading ? "Preparing download..." : "")}</p>
-            {(isReadingFiles || isTranscribing || isDownloading) && <div className="mt-2 h-1 w-full bg-sky-500/30 rounded-full overflow-hidden"><div className="h-1 animate-pulse bg-sky-500 w-1/2"></div></div>}
+            {(isReadingFiles || isDownloading) && <div className="mt-2 h-1 w-full bg-sky-500/30 rounded-full overflow-hidden"><div className="h-1 animate-pulse bg-sky-500 w-1/2"></div></div>}
           </div>
         )}
 
@@ -326,8 +366,12 @@ const App: React.FC = () => {
               </div>
             </div>
             <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-2">
-              {processedFiles.map((file) => (
-                <FileListItem key={file.id} file={file} />
+              {processedFiles.map((file: ProcessedFile) => (
+                <FileListItem 
+                  key={file.id} 
+                  file={file}
+                  onDownload={handleDownloadSingle}
+                />
               ))}
             </div>
           </div>
