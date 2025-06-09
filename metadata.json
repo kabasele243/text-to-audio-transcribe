@@ -1,0 +1,5 @@
+{
+  "name": "Text-to-Audio Transcriber",
+  "description": "An application to upload text files (.txt or .zip containing .txt) and convert their content to speech.",
+  "requestFramePermissions": []
+}
