@@ -6,8 +6,12 @@ import { combineReducers } from '@reduxjs/toolkit';
 import filesReducer from './slices/filesSlice';
 import settingsReducer from './slices/settingsSlice';
 import uiReducer from './slices/uiSlice';
+import { filesAdapter } from './slices/filesSlice';
 
-// Transform to handle blob URLs in persisted state
+// Cache the initial adapter state to prevent creating new references
+const initialAdapterState = filesAdapter.getInitialState();
+
+// Transform to handle blob URLs in persisted state and ensure entity adapter structure
 const filesTransform: Transform<any, any> = {
   in: (inboundState) => {
     // When persisting: clean up blob URLs since they won't work after refresh
@@ -34,7 +38,38 @@ const filesTransform: Transform<any, any> = {
     return inboundState;
   },
   out: (outboundState) => {
-    // When rehydrating: return state as-is
+    // When rehydrating: ensure proper entity adapter structure
+    if (!outboundState || !outboundState.files) {
+      // If no files state, return initial state structure
+      return {
+        ...outboundState,
+        files: initialAdapterState,
+      };
+    }
+    
+    const filesState = outboundState.files;
+    
+    // If the files state doesn't have the proper entity adapter structure, fix it
+    if (!filesState.ids || !filesState.entities || !Array.isArray(filesState.ids)) {
+      // If we have entities but no ids array, reconstruct the ids array
+      if (filesState.entities && typeof filesState.entities === 'object') {
+        const ids = Object.keys(filesState.entities);
+        return {
+          ...outboundState,
+          files: {
+            ...filesState,
+            ids,
+            entities: filesState.entities,
+          },
+        };
+      } else {
+        // If no valid entities, return cached initial state structure
+        return {
+          ...outboundState,
+          files: initialAdapterState,
+        };
+      }
+    }
     return outboundState;
   },
 };
@@ -50,10 +85,21 @@ const rootPersistConfig = {
 // Configure persistence for files slice - exclude temporary states
 const filesPersistConfig = {
   key: 'files',
+  version: 1,
   storage,
   // Exclude temporary loading states and progress that shouldn't persist
   blacklist: ['isReadingFiles', 'isTranscribing', 'isDownloading', 'isRestoringAudio', 'transcriptionProgress', 'error'],
   transforms: [filesTransform], // Apply the transform to handle blob URLs
+  migrate: (state: any) => {
+    // Migration logic for different versions
+    if (state && typeof state === 'object') {
+      // Ensure files has proper entity adapter structure
+      if (state.files && (!state.files.ids || !state.files.entities)) {
+        state.files = initialAdapterState;
+      }
+    }
+    return Promise.resolve(state);
+  },
 };
 
 // Configure persistence for settings slice - persist everything

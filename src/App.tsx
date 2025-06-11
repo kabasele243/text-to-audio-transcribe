@@ -63,6 +63,7 @@ const App: React.FC = () => {
   const canClear = useAppSelector(selectCanClear);
   const canDownload = useAppSelector(selectCanDownload);
   const readyFiles = useAppSelector(selectReadyFiles);
+  const transcribedFiles = useAppSelector(selectTranscribedFiles);
 
   useEffect(() => {
     dispatch(loadVoices());
@@ -196,7 +197,6 @@ const App: React.FC = () => {
   }, [dispatch, selectedVoice, selectedSpeed, readyFiles]);
 
   const handleDownloadAll = useCallback(async () => {
-    const transcribedFiles = useAppSelector(selectTranscribedFiles);
     if (transcribedFiles.length === 0) return;
 
     dispatch(setIsDownloading(true));
@@ -246,7 +246,7 @@ const App: React.FC = () => {
     } finally {
       dispatch(setIsDownloading(false));
     }
-  }, [dispatch]);
+  }, [dispatch, transcribedFiles]);
 
   const handleClearAll = useCallback(() => {
     dispatch(clearAllFiles());

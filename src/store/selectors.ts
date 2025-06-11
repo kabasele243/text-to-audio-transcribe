@@ -2,8 +2,23 @@ import { createSelector } from '@reduxjs/toolkit';
 import { RootState } from './index';
 import { filesAdapter } from './slices/filesSlice';
 
-// Create entity selectors with proper RootState typing
-const filesEntitySelectors = filesAdapter.getSelectors((state: RootState) => state.files.files);
+// Cache the initial state to prevent creating new references
+const initialFilesState = filesAdapter.getInitialState();
+
+// Create entity selectors with proper null checking for rehydration safety
+const selectFilesEntityState = (state: RootState) => {
+  // Ensure the files state has the proper entity adapter structure
+  const filesState = state.files.files;
+  
+  // If the state doesn't have the proper structure, return the cached initial state
+  if (!filesState || typeof filesState.ids === 'undefined' || typeof filesState.entities === 'undefined') {
+    return initialFilesState;
+  }
+  
+  return filesState;
+};
+
+const filesEntitySelectors = filesAdapter.getSelectors(selectFilesEntityState);
 
 // Base selectors
 export const selectFilesState = (state: RootState) => state.files;
@@ -20,11 +35,11 @@ export const selectIsRestoringAudio = (state: RootState) => state.files.isRestor
 export const selectTranscriptionProgress = (state: RootState) => state.files.transcriptionProgress;
 export const selectFilesError = (state: RootState) => state.files.error;
 
-// Settings selectors
-export const selectSelectedVoice = (state: RootState) => state.settings.selectedVoice;
-export const selectAvailableVoices = (state: RootState) => state.settings.availableVoices;
-export const selectSelectedSpeed = (state: RootState) => state.settings.selectedSpeed;
-export const selectIsLoadingVoices = (state: RootState) => state.settings.isLoadingVoices;
+// Settings selectors with safe defaults
+export const selectSelectedVoice = (state: RootState) => state.settings.selectedVoice || 'am_michael';
+export const selectAvailableVoices = (state: RootState) => state.settings.availableVoices || ['am_michael'];
+export const selectSelectedSpeed = (state: RootState) => state.settings.selectedSpeed || 1.0;
+export const selectIsLoadingVoices = (state: RootState) => state.settings.isLoadingVoices || false;
 
 // UI selectors
 export const selectGlobalMessage = (state: RootState) => state.ui.globalMessage;

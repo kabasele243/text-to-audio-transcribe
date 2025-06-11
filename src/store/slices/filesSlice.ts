@@ -206,6 +206,10 @@ const filesSlice = createSlice({
     },
     addProcessedFiles: (state, action: PayloadAction<ProcessedFile[]>) => {
       // RTK Best Practice: Use adapter methods for normalized operations
+      // Ensure state.files has proper entity adapter structure
+      if (!state.files || !state.files.ids || !state.files.entities) {
+        state.files = filesAdapter.getInitialState();
+      }
       filesAdapter.addMany(state.files, action.payload);
       state.error = null;
     },
@@ -215,6 +219,10 @@ const filesSlice = createSlice({
       error?: string;
     }>) => {
       const { fileId, status, error } = action.payload;
+      // Ensure state.files has proper entity adapter structure
+      if (!state.files || !state.files.ids || !state.files.entities) {
+        state.files = filesAdapter.getInitialState();
+      }
       filesAdapter.updateOne(state.files, {
         id: fileId,
         changes: { 
@@ -229,6 +237,10 @@ const filesSlice = createSlice({
       audioSrc: string;
     }>) => {
       const { fileId, audioSrc } = action.payload;
+      // Ensure state.files has proper entity adapter structure
+      if (!state.files || !state.files.ids || !state.files.entities) {
+        state.files = filesAdapter.getInitialState();
+      }
       filesAdapter.updateOne(state.files, {
         id: fileId,
         changes: { 
@@ -240,7 +252,8 @@ const filesSlice = createSlice({
     },
     clearAllFiles: (state) => {
       // RTK Best Practice: Use adapter method for clearing
-      filesAdapter.removeAll(state.files);
+      // Reset to clean initial state
+      state.files = filesAdapter.getInitialState();
       state.error = null;
       state.transcriptionProgress = { current: 0, total: 0, currentFileName: null };
     },
@@ -265,6 +278,10 @@ const filesSlice = createSlice({
       // Re-fetch audio for specific file
       .addCase(refetchAudioForFile.pending, (state, action) => {
         const fileId = action.meta.arg.file.id;
+        // Ensure state.files has proper entity adapter structure
+        if (!state.files || !state.files.ids || !state.files.entities) {
+          state.files = filesAdapter.getInitialState();
+        }
         filesAdapter.updateOne(state.files, {
           id: fileId,
           changes: { status: 'processing', error: undefined }
@@ -272,6 +289,10 @@ const filesSlice = createSlice({
       })
       .addCase(refetchAudioForFile.fulfilled, (state, action) => {
         const { fileId, audioSrc } = action.payload;
+        // Ensure state.files has proper entity adapter structure
+        if (!state.files || !state.files.ids || !state.files.entities) {
+          state.files = filesAdapter.getInitialState();
+        }
         filesAdapter.updateOne(state.files, {
           id: fileId,
           changes: { 
@@ -285,6 +306,10 @@ const filesSlice = createSlice({
         const fileId = action.meta.arg.file.id;
         const errorMessage = action.payload || 'Failed to re-fetch audio';
         
+        // Ensure state.files has proper entity adapter structure
+        if (!state.files || !state.files.ids || !state.files.entities) {
+          state.files = filesAdapter.getInitialState();
+        }
         filesAdapter.updateOne(state.files, {
           id: fileId,
           changes: { 
@@ -296,6 +321,10 @@ const filesSlice = createSlice({
       // Single file transcription
       .addCase(transcribeFile.pending, (state, action) => {
         const fileId = action.meta.arg.file.id;
+        // Ensure state.files has proper entity adapter structure
+        if (!state.files || !state.files.ids || !state.files.entities) {
+          state.files = filesAdapter.getInitialState();
+        }
         filesAdapter.updateOne(state.files, {
           id: fileId,
           changes: { status: 'processing', error: undefined }
@@ -305,6 +334,10 @@ const filesSlice = createSlice({
       })
       .addCase(transcribeFile.fulfilled, (state, action) => {
         const { fileId, result } = action.payload;
+        // Ensure state.files has proper entity adapter structure
+        if (!state.files || !state.files.ids || !state.files.entities) {
+          state.files = filesAdapter.getInitialState();
+        }
         filesAdapter.updateOne(state.files, {
           id: fileId,
           changes: { 
@@ -324,6 +357,10 @@ const filesSlice = createSlice({
         const fileId = action.meta.arg.file.id;
         const errorMessage = action.payload || action.error.message || 'Transcription failed';
         
+        // Ensure state.files has proper entity adapter structure
+        if (!state.files || !state.files.ids || !state.files.entities) {
+          state.files = filesAdapter.getInitialState();
+        }
         filesAdapter.updateOne(state.files, {
           id: fileId,
           changes: { 
@@ -333,7 +370,7 @@ const filesSlice = createSlice({
         });
         
         // Check if all transcriptions are complete
-        const files = Object.values(state.files.entities);
+        const files = Object.values(state.files.entities || {});
         const stillProcessing = files.some(f => f?.status === 'processing');
         if (!stillProcessing) {
           state.isTranscribing = false;
